@@ -399,19 +399,35 @@
     const ITEM_CTX_URL = 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext';
 
     function inferExtractType(q) {
+      let hasCoverage = false;
+      let hasPatient = false;
+      function walkItems(items) {
+        for (const item of items || []) {
+          if (item.definition?.includes('Coverage')) hasCoverage = true;
+          if (item.definition?.includes('Patient')) hasPatient = true;
+          const ctx = item.extension?.find(e => e.url === ITEM_CTX_URL)?.valueCode;
+          if (ctx === 'Coverage') hasCoverage = true;
+          if (ctx === 'Patient') hasPatient = true;
+          if (item.item) walkItems(item.item);
+        }
+      }
+      walkItems(q.item);
+      if (hasCoverage && !hasPatient) return 'Coverage';
+      if (hasPatient && !hasCoverage) return 'Patient';
+
       const DEF_EXTRACT = 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-definitionExtract';
       let found;
-      function walk(items) {
+      function walkExtract(items) {
         for (const item of items || []) {
           const ext = item.extension?.find(e => e.url === DEF_EXTRACT);
           if (ext) {
             found = ext.extension?.find(e => e.url === 'definition')?.valueCanonical;
             return;
           }
-          if (item.item) walk(item.item);
+          if (item.item) walkExtract(item.item);
         }
       }
-      walk(q.item);
+      walkExtract(q.item);
       const ext = (q.extension || []).find(e => e.url === DEF_EXTRACT);
       if (ext) found = ext.extension?.find(e => e.url === 'definition')?.valueCanonical;
       if (found?.includes('Coverage')) return 'Coverage';
@@ -573,6 +589,38 @@
       return { input: inputPatient, output, mapUrl: 'http://okrx.ca/fhir/StructureMap/' + mapId, engine: 'Matchbox' };
     }
 
+    function mergeExtractBundlePatients(patients) {
+      if (!patients.length) return null;
+      const merged = { resourceType: 'Patient', name: [{}], address: [{}], telecom: [] };
+      for (const p of patients) {
+        if (p.birthDate) merged.birthDate = p.birthDate;
+        if (p.gender) merged.gender = p.gender;
+        const n = p.name?.[0];
+        if (n?.given?.length) merged.name[0].given = n.given;
+        if (n?.family) merged.name[0].family = n.family;
+        if (p.telecom?.length) merged.telecom = p.telecom;
+        const a = p.address?.[0];
+        if (a) {
+          if (a.line) merged.address[0].line = a.line;
+          if (a.city) merged.address[0].city = a.city;
+          if (a.state) merged.address[0].state = a.state;
+        }
+      }
+      return merged;
+    }
+
+    function mergeExtractBundleCoverages(coverages) {
+      if (!coverages.length) return null;
+      const merged = { resourceType: 'Coverage', payor: [{}], class: [], relationship: { coding: [{}] } };
+      for (const c of coverages) {
+        if (c.payor?.[0]?.display) merged.payor[0].display = c.payor[0].display;
+        if (c.subscriberId) merged.subscriberId = c.subscriberId;
+        if (c.class?.length) merged.class = c.class;
+        if (c.relationship?.coding?.[0]?.code) merged.relationship.coding[0].code = c.relationship.coding[0].code;
+      }
+      return merged;
+    }
+
     function resourcesFromExtractBundle(bundle) {
       const patients = [];
       const coverages = [];
@@ -584,7 +632,11 @@
         if (res.resourceType === 'Patient') patients.push(res);
         if (res.resourceType === 'Coverage') coverages.push(res);
       }
-      return { patient: patients[0] || null, coverage: coverages[0] || null, bundle };
+      return {
+        patient: mergeExtractBundlePatients(patients),
+        coverage: mergeExtractBundleCoverages(coverages),
+        bundle
+      };
     }
 
     async function persistPatient(patient) {
@@ -788,6 +840,10 @@
       const bundle = await hapiExtract(qDoc, qrDoc);
       const { patient: extractedPatient, coverage: extractedCoverage } = resourcesFromExtractBundle(bundle);
       const prevProv = { ...mergeState.provenance };
+
+      if (source === 'drugplan-qr' && !extractedCoverage) {
+        throw new Error('HAPI $extract returned no Coverage — extract context must be Coverage for drug plan form');
+      }
 
       if (extractedPatient) {
         const { patient, provenance } = mergePatient360(mergeState.patient, extractedPatient, source, { provenance: mergeState.provenance });
