@@ -1,0 +1,5 @@
+matchbox:
+  fhir:
+    context:
+      onlyOneEngine: true
+      httpReadOnly: false

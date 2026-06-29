@@ -29,6 +29,18 @@ services:
       - ./demo/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - hapi
+      - matchbox
+
+  matchbox:
+    image: europe-west6-docker.pkg.dev/ahdis-ch/ahdis/matchbox:latest
+    container_name: okrx-matchbox
+    restart: on-failure
+    environment:
+      matchbox.fhir.context.onlyOneEngine: "true"
+      matchbox.fhir.context.httpReadOnly: "false"
+      SPRING_CONFIG_ADDITIONAL_LOCATION: "file:///config/application.yaml"
+    volumes:
+      - ./config/matchbox-application.yaml:/config/application.yaml:ro
 
   db:
     image: postgres:15-alpine

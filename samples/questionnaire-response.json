@@ -5,17 +5,12 @@
   "status": "completed",
   "item": [
     {
-      "linkId": "patient-section",
-      "item": [
-        {
-          "linkId": "first-name",
-          "answer": [{ "valueString": "Jane" }]
-        },
-        {
-          "linkId": "last-name",
-          "answer": [{ "valueString": "Doe" }]
-        }
-      ]
+      "linkId": "first-name",
+      "answer": [{ "valueString": "Jane" }]
+    },
+    {
+      "linkId": "last-name",
+      "answer": [{ "valueString": "Doe" }]
     }
   ]
 }

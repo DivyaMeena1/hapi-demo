@@ -1,0 +1,12 @@
+map "http://okrx.ca/fhir/StructureMap/okrx-legacy-patient-normalize" = "OkRxLegacyPatientNormalize"
+
+uses "http://hl7.org/fhir/StructureDefinition/Patient" alias Patient as source
+uses "http://hl7.org/fhir/StructureDefinition/Patient" alias Patient as target
+
+group NormalizeLegacy(source src : Patient, target tgt : Patient) {
+  src.name as n -> tgt.name as nm, nm.family = (n.family.substring(0,1).upper() + n.family.substring(1).lower()) "NormalizeFamily";
+  src.name as n -> tgt.name as nm, nm.given = (n.given.first().substring(0,1).upper() + n.given.first().substring(1).lower()) "NormalizeGiven";
+  src.gender as g -> tgt.gender = g "CopyGender";
+  src.birthDate as d -> tgt.birthDate = d "CopyBirthDate";
+  src.birthDate as dob -> tgt.identifier as id, id.system = 'http://okrx.ca/mrn', id.value = ('OKRX-' + dob.toString().replace('-', '')) "AddMrn";
+}

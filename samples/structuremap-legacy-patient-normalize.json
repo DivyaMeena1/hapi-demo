@@ -1,0 +1,74 @@
+{
+  "resourceType": "StructureMap",
+  "id": "okrx-legacy-patient-normalize",
+  "url": "http://okrx.ca/fhir/StructureMap/okrx-legacy-patient-normalize",
+  "name": "OkRxLegacyPatientNormalize",
+  "status": "active",
+  "description": "Legacy ALL CAPS Patient names → proper case + OkRx MRN identifier from birthDate",
+  "structure": [
+    { "url": "http://hl7.org/fhir/StructureDefinition/Patient", "mode": "source" },
+    { "url": "http://hl7.org/fhir/StructureDefinition/Patient", "mode": "target" }
+  ],
+  "group": [{
+    "name": "LegacyPatientNormalize",
+    "typeMode": "types",
+    "input": [{ "name": "src", "type": "Patient", "mode": "source" }],
+    "output": [{ "name": "tgt", "type": "Patient", "mode": "target" }],
+    "rule": [
+      {
+        "name": "normalizeFamily",
+        "source": [{ "context": "src", "element": "name.family", "variable": "fam" }],
+        "target": [{
+          "context": "tgt",
+          "element": "name.family",
+          "transform": "evaluate",
+          "parameter": [{ "valueString": "fam.substring(0,1).upper() + fam.substring(1).lower()" }]
+        }]
+      },
+      {
+        "name": "normalizeGiven",
+        "source": [{ "context": "src", "element": "name.given", "variable": "gvn", "listMode": "first" }],
+        "target": [{
+          "context": "tgt",
+          "element": "name.given",
+          "transform": "evaluate",
+          "parameter": [{ "valueString": "gvn.substring(0,1).upper() + gvn.substring(1).lower()" }]
+        }]
+      },
+      {
+        "name": "copyGender",
+        "source": [{ "context": "src", "element": "gender" }],
+        "target": [{ "context": "tgt", "element": "gender", "transform": "copy" }]
+      },
+      {
+        "name": "copyBirthDate",
+        "source": [{ "context": "src", "element": "birthDate", "variable": "dob" }],
+        "target": [{ "context": "tgt", "element": "birthDate", "transform": "copy" }]
+      },
+      {
+        "name": "addMrnIdentifier",
+        "source": [{ "context": "src", "element": "birthDate", "variable": "dob" }],
+        "target": [
+          {
+            "context": "tgt",
+            "element": "identifier",
+            "transform": "create",
+            "parameter": [{ "valueString": "Identifier" }]
+          },
+          {
+            "context": "tgt",
+            "element": "identifier.system",
+            "transform": "evaluate",
+            "parameter": [{ "valueString": "'http://okrx.ca/mrn'" }]
+          },
+          {
+            "context": "tgt",
+            "element": "identifier.value",
+            "transform": "evaluate",
+            "parameter": [{ "valueString": "'OKRX-' + dob.replaceMatches('-', '')" }]
+          }
+        ]
+      }
+    ]
+  }]
+}

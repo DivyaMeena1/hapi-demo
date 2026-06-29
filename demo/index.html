@@ -56,7 +56,7 @@
 </head>
 <body>
   <h1>HAPI FHIR demo</h1>
-  <p class="sub">One engine: <span class="pill">HAPI</span> + <span class="pill">OkRxFHIRAPI (Firely)</span> · $extract · $transform · $translate · Patient search · Patient360 merge</p>
+  <p class="sub"><span class="pill">HAPI</span> for extract / translate / search · <span class="pill">Matchbox</span> for transform only · All operations server-side (no JS fallbacks)</p>
 
   <nav class="tabs" role="tablist">
     <button type="button" class="tab-btn active" data-tab="tab-engine" role="tab" aria-selected="true">Engine demo</button>
@@ -67,23 +67,23 @@
     <div class="grid">
       <div class="card">
         <h2>Server <span class="badge" id="server-badge">checking…</span></h2>
-        <p class="hint">Demo page <code>localhost:8091</code> → proxies <code>/fhir</code> → HAPI on 8090</p>
+        <p class="hint">Demo page <code>localhost:8091</code> → <code>/fhir</code> → HAPI · <code>/matchbox/fhir</code> → Matchbox</p>
         <button type="button" id="btn-metadata">Check metadata</button>
         <pre id="out-metadata">Loading…</pre>
       </div>
 
       <div class="card">
         <h2>1. $extract <span class="badge ok">definitions in Questionnaire</span></h2>
-        <p><code>item.definition</code> + <code>definitionExtract</code> in the form JSON — no FML file per form.</p>
-        <button type="button" id="btn-extract">Run definition extract (Jane Doe)</button>
+        <p><code>item.definition</code> + <code>itemExtractionContext</code> — POST <code>QuestionnaireResponse/$extract</code> on HAPI (flat items).</p>
+        <button type="button" id="btn-extract">Run HAPI $extract (Jane Doe)</button>
         <div class="status" id="status-extract"></div>
         <pre id="out-extract"></pre>
       </div>
 
       <div class="card">
-        <h2>2. $transform</h2>
-        <p>Shared map on HAPI: takes a <strong>legacy</strong> Patient (ALL CAPS name, no MRN) and outputs a cleaned Patient (proper case + OkRx identifier). Not used for enrolment forms.</p>
-        <button type="button" id="btn-transform">Run $transform</button>
+        <h2>2. $transform <span class="badge">Matchbox</span></h2>
+        <p>Shared FML map on Matchbox — POST <code>StructureMap/okrx-legacy-patient-normalize/$transform</code>. Map rules in <code>demo/legacy-patient-normalize.fml</code>.</p>
+        <button type="button" id="btn-transform">Run Matchbox $transform</button>
         <div class="status" id="status-transform"></div>
         <pre id="out-transform"></pre>
       </div>
@@ -133,7 +133,7 @@
           <span class="pill">DOB 1990-05-15</span>
           <span class="pill">MRN OKRX-19900515</span>
         </div>
-        <p class="hint">Simulates production flow: immutable QuestionnaireResponse → definition <code>$extract</code> → field-level merge into one Patient360 Patient + Coverage, with dual-write to legacy <code>Patient</code> / <code>PatientInsurer</code> tables.</p>
+        <p class="hint">QuestionnaireResponse → HAPI <code>$extract</code> → merge → <code>PUT Patient</code> / <code>PUT Coverage</code> on HAPI. Field merge is OkRxFHIRAPI orchestration; extract is always server-side.</p>
         <button type="button" id="btn-step-intake">Step A — Intake (Bucket 1)</button>
         <button type="button" id="btn-step-drugplan" disabled>Step B — Drug plan confirm (Bucket 2)</button>
         <button type="button" id="btn-step-profile" disabled>Step C — Profile update</button>
@@ -197,6 +197,7 @@
 
   <script>
     const FHIR = '/fhir';
+    const MATCHBOX = '/matchbox/fhir';
 
     // --- Tab switching ---
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -213,31 +214,24 @@
 
     const questionnaire = {
       resourceType: 'Questionnaire',
+      id: 'okrx-name-demo',
       url: 'http://okrx.ca/fhir/Questionnaire/okrx-name-demo',
-      item: [{
-        linkId: 'patient-section',
-        type: 'group',
-        extension: [{
-          url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-definitionExtract',
-          extension: [{ url: 'definition', valueCanonical: 'http://hl7.org/fhir/StructureDefinition/Patient' }]
-        }],
-        item: [
-          { linkId: 'first-name', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.name.given' },
-          { linkId: 'last-name', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.name.family' }
-        ]
-      }]
+      status: 'active',
+      item: [
+        { linkId: 'first-name', type: 'string', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.name.given', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Patient' }] },
+        { linkId: 'last-name', type: 'string', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.name.family', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Patient' }] }
+      ]
     };
 
     const qr = {
       resourceType: 'QuestionnaireResponse',
+      id: 'okrx-name-response',
+      questionnaire: 'http://okrx.ca/fhir/Questionnaire/okrx-name-demo',
       status: 'completed',
-      item: [{
-        linkId: 'patient-section',
-        item: [
-          { linkId: 'first-name', answer: [{ valueString: 'Jane' }] },
-          { linkId: 'last-name', answer: [{ valueString: 'Doe' }] }
-        ]
-      }]
+      item: [
+        { linkId: 'first-name', answer: [{ valueString: 'Jane' }] },
+        { linkId: 'last-name', answer: [{ valueString: 'Doe' }] }
+      ]
     };
 
     const conceptMap = {
@@ -263,15 +257,6 @@
       birthDate: '1990-05-15'
     };
 
-    const structureMap = {
-      resourceType: 'StructureMap',
-      id: 'okrx-legacy-patient-normalize',
-      url: 'http://okrx.ca/fhir/StructureMap/okrx-legacy-patient-normalize',
-      name: 'OkRxLegacyPatientNormalize',
-      status: 'active',
-      description: 'Demo: ALL CAPS legacy name → proper case + add OkRx MRN identifier'
-    };
-
     const legacyPatientInput = {
       resourceType: 'Patient',
       name: [{ family: 'DOE', given: ['JANE'] }],
@@ -279,103 +264,87 @@
       birthDate: '1990-05-15'
     };
 
+    let fmlContent = null;
+
     // --- Tab 2: Patient360 demo data ---
     const DEMO_MRN = 'OKRX-19900515';
     const DEMO_PATIENT_ID = 'patient360-jane-doe';
 
     const intakeQuestionnaire = {
       resourceType: 'Questionnaire',
+      id: 'okrx-intake',
       url: 'http://okrx.ca/fhir/Questionnaire/okrx-intake',
-      item: [{
-        linkId: 'intake-section',
-        type: 'group',
-        extension: [{
-          url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-definitionExtract',
-          extension: [{ url: 'definition', valueCanonical: 'http://hl7.org/fhir/StructureDefinition/Patient' }]
-        }],
-        item: [
-          { linkId: 'first-name', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.name.given' },
-          { linkId: 'last-name', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.name.family' },
-          { linkId: 'birth-date', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.birthDate' },
-          { linkId: 'gender', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.gender' },
-          { linkId: 'phone', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.telecom.value' },
-          { linkId: 'address-line', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.address.line' },
-          { linkId: 'address-city', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.address.city' },
-          { linkId: 'address-state', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.address.state' }
-        ]
-      }]
+      status: 'active',
+      item: [
+        { linkId: 'first-name', type: 'string', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.name.given', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Patient' }] },
+        { linkId: 'last-name', type: 'string', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.name.family', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Patient' }] },
+        { linkId: 'birth-date', type: 'date', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.birthDate', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Patient' }] },
+        { linkId: 'gender', type: 'choice', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.gender', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Patient' }] },
+        { linkId: 'phone', type: 'string', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.telecom.value', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Patient' }] },
+        { linkId: 'address-line', type: 'string', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.address.line', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Patient' }] },
+        { linkId: 'address-city', type: 'string', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.address.city', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Patient' }] },
+        { linkId: 'address-state', type: 'string', definition: 'http://hl7.org/fhir/StructureDefinition/Patient#Patient.address.state', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Patient' }] }
+      ]
     };
 
     const intakeQr = {
       resourceType: 'QuestionnaireResponse',
+      id: 'okrx-intake-response',
       status: 'completed',
       questionnaire: intakeQuestionnaire.url,
-      item: [{
-        linkId: 'intake-section',
-        item: [
-          { linkId: 'first-name', answer: [{ valueString: 'Jane' }] },
-          { linkId: 'last-name', answer: [{ valueString: 'Doe' }] },
-          { linkId: 'birth-date', answer: [{ valueDate: '1990-05-15' }] },
-          { linkId: 'gender', answer: [{ valueCoding: { system: 'http://hl7.org/fhir/administrative-gender', code: 'female' } }] },
-          { linkId: 'phone', answer: [{ valueString: '416-555-0100' }] },
-          { linkId: 'address-line', answer: [{ valueString: '123 Main St' }] },
-          { linkId: 'address-city', answer: [{ valueString: 'Toronto' }] },
-          { linkId: 'address-state', answer: [{ valueString: 'ON' }] }
-        ]
-      }]
+      item: [
+        { linkId: 'first-name', answer: [{ valueString: 'Jane' }] },
+        { linkId: 'last-name', answer: [{ valueString: 'Doe' }] },
+        { linkId: 'birth-date', answer: [{ valueDate: '1990-05-15' }] },
+        { linkId: 'gender', answer: [{ valueCoding: { system: 'http://hl7.org/fhir/administrative-gender', code: 'female' } }] },
+        { linkId: 'phone', answer: [{ valueString: '416-555-0100' }] },
+        { linkId: 'address-line', answer: [{ valueString: '123 Main St' }] },
+        { linkId: 'address-city', answer: [{ valueString: 'Toronto' }] },
+        { linkId: 'address-state', answer: [{ valueString: 'ON' }] }
+      ]
     };
 
     const profileUpdateQr = {
       resourceType: 'QuestionnaireResponse',
+      id: 'okrx-profile-response',
       status: 'completed',
       questionnaire: intakeQuestionnaire.url,
-      item: [{
-        linkId: 'intake-section',
-        item: [
-          { linkId: 'first-name', answer: [{ valueString: 'Jane' }] },
-          { linkId: 'last-name', answer: [{ valueString: 'Doe' }] },
-          { linkId: 'birth-date', answer: [{ valueDate: '1990-05-15' }] },
-          { linkId: 'gender', answer: [{ valueCoding: { system: 'http://hl7.org/fhir/administrative-gender', code: 'female' } }] },
-          { linkId: 'phone', answer: [{ valueString: '647-555-0199' }] },
-          { linkId: 'address-line', answer: [{ valueString: '456 Oak Ave' }] },
-          { linkId: 'address-city', answer: [{ valueString: 'Mississauga' }] },
-          { linkId: 'address-state', answer: [{ valueString: 'ON' }] }
-        ]
-      }]
+      item: [
+        { linkId: 'first-name', answer: [{ valueString: 'Jane' }] },
+        { linkId: 'last-name', answer: [{ valueString: 'Doe' }] },
+        { linkId: 'birth-date', answer: [{ valueDate: '1990-05-15' }] },
+        { linkId: 'gender', answer: [{ valueCoding: { system: 'http://hl7.org/fhir/administrative-gender', code: 'female' } }] },
+        { linkId: 'phone', answer: [{ valueString: '647-555-0199' }] },
+        { linkId: 'address-line', answer: [{ valueString: '456 Oak Ave' }] },
+        { linkId: 'address-city', answer: [{ valueString: 'Mississauga' }] },
+        { linkId: 'address-state', answer: [{ valueString: 'ON' }] }
+      ]
     };
 
     const drugPlanQuestionnaire = {
       resourceType: 'Questionnaire',
+      id: 'okrx-drugplan-confirm',
       url: 'http://okrx.ca/fhir/Questionnaire/okrx-drugplan-confirm',
-      item: [{
-        linkId: 'drugplan-section',
-        type: 'group',
-        extension: [{
-          url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-definitionExtract',
-          extension: [{ url: 'definition', valueCanonical: 'http://hl7.org/fhir/StructureDefinition/Coverage' }]
-        }],
-        item: [
-          { linkId: 'insurer-name', definition: 'http://hl7.org/fhir/StructureDefinition/Coverage#Coverage.payor.display' },
-          { linkId: 'group-number', definition: 'http://hl7.org/fhir/StructureDefinition/Coverage#Coverage.class.value' },
-          { linkId: 'member-id', definition: 'http://hl7.org/fhir/StructureDefinition/Coverage#Coverage.subscriberId' },
-          { linkId: 'relationship', definition: 'http://hl7.org/fhir/StructureDefinition/Coverage#Coverage.relationship.coding.code' }
-        ]
-      }]
+      status: 'active',
+      item: [
+        { linkId: 'insurer-name', type: 'string', definition: 'http://hl7.org/fhir/StructureDefinition/Coverage#Coverage.payor.display', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Coverage' }] },
+        { linkId: 'group-number', type: 'string', definition: 'http://hl7.org/fhir/StructureDefinition/Coverage#Coverage.class.value', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Coverage' }] },
+        { linkId: 'member-id', type: 'string', definition: 'http://hl7.org/fhir/StructureDefinition/Coverage#Coverage.subscriberId', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Coverage' }] },
+        { linkId: 'relationship', type: 'choice', definition: 'http://hl7.org/fhir/StructureDefinition/Coverage#Coverage.relationship.coding.code', extension: [{ url: 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext', valueCode: 'Coverage' }] }
+      ]
     };
 
     const drugPlanQr = {
       resourceType: 'QuestionnaireResponse',
+      id: 'okrx-drugplan-response',
       status: 'completed',
       questionnaire: drugPlanQuestionnaire.url,
-      item: [{
-        linkId: 'drugplan-section',
-        item: [
-          { linkId: 'insurer-name', answer: [{ valueString: 'Sun Life' }] },
-          { linkId: 'group-number', answer: [{ valueString: 'GRP-88421' }] },
-          { linkId: 'member-id', answer: [{ valueString: 'MEM-9928471' }] },
-          { linkId: 'relationship', answer: [{ valueCoding: { code: 'self', display: 'Self' } }] }
-        ]
-      }]
+      item: [
+        { linkId: 'insurer-name', answer: [{ valueString: 'Sun Life' }] },
+        { linkId: 'group-number', answer: [{ valueString: 'GRP-88421' }] },
+        { linkId: 'member-id', answer: [{ valueString: 'MEM-9928471' }] },
+        { linkId: 'relationship', answer: [{ valueCoding: { code: 'self', display: 'Self' } }] }
+      ]
     };
 
     /** Static row metadata for the 1:1 mapping table */
@@ -405,6 +374,78 @@
       let json;
       try { json = JSON.parse(text); } catch { json = { raw: text }; }
       return { ok: res.ok, status: res.status, json };
+    }
+
+    async function matchboxFhir(path, options = {}) {
+      const headers = { Accept: 'application/fhir+json', ...options.headers };
+      if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/fhir+json';
+      const res = await fetch(MATCHBOX + path, { ...options, headers });
+      const text = await res.text();
+      let json;
+      try { json = JSON.parse(text); } catch { json = { raw: text }; }
+      return { ok: res.ok, status: res.status, json };
+    }
+
+    function collectOperations(cap) {
+      const ops = [];
+      const rest = cap?.rest?.[0];
+      for (const op of rest?.operation || []) ops.push(op.name);
+      for (const res of rest?.resource || []) {
+        for (const op of res.operation || []) ops.push(res.type + '/' + op.name);
+      }
+      return ops;
+    }
+
+    const ITEM_CTX_URL = 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemExtractionContext';
+
+    function inferExtractType(q) {
+      const DEF_EXTRACT = 'http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-definitionExtract';
+      let found;
+      function walk(items) {
+        for (const item of items || []) {
+          const ext = item.extension?.find(e => e.url === DEF_EXTRACT);
+          if (ext) {
+            found = ext.extension?.find(e => e.url === 'definition')?.valueCanonical;
+            return;
+          }
+          if (item.item) walk(item.item);
+        }
+      }
+      walk(q.item);
+      const ext = (q.extension || []).find(e => e.url === DEF_EXTRACT);
+      if (ext) found = ext.extension?.find(e => e.url === 'definition')?.valueCanonical;
+      if (found?.includes('Coverage')) return 'Coverage';
+      return 'Patient';
+    }
+
+    function flattenQuestionnaire(q, extractType) {
+      const type = extractType || inferExtractType(q);
+      const flatItems = [];
+      function walk(items) {
+        for (const item of items || []) {
+          if (item.type === 'group' && item.item) walk(item.item);
+          else {
+            const extension = (item.extension || []).filter(e => e.url !== ITEM_CTX_URL);
+            extension.push({ url: ITEM_CTX_URL, valueCode: type });
+            flatItems.push({ ...item, extension });
+          }
+        }
+      }
+      walk(q.item);
+      const { extension, ...rest } = q;
+      return { ...rest, item: flatItems };
+    }
+
+    function flattenQr(qr) {
+      const flatItems = [];
+      function walk(items) {
+        for (const item of items || []) {
+          if (item.answer) flatItems.push({ linkId: item.linkId, answer: item.answer });
+          else if (item.item) walk(item.item);
+        }
+      }
+      walk(qr.item);
+      return { ...qr, item: flatItems };
     }
 
     function show(outId, statusId, data, ok, msg) {
@@ -446,63 +487,126 @@
       return val;
     }
 
-    /** Generalized SDC definition extract → Patient and/or Coverage partial resources */
-    function definitionExtractResources(questionnaire, response) {
-      const patient = { resourceType: 'Patient', name: [{}], address: [{}], telecom: [] };
-      const coverage = { resourceType: 'Coverage', payor: [{}], class: [], relationship: { coding: [{}] } };
-      let hasPatient = false;
-      let hasCoverage = false;
-
-      function applyDefinition(definition, val) {
-        if (!definition || val === undefined) return;
-        if (definition.includes('Patient.name.given')) { patient.name[0].given = [val]; hasPatient = true; }
-        if (definition.includes('Patient.name.family')) { patient.name[0].family = val; hasPatient = true; }
-        if (definition.includes('Patient.birthDate')) { patient.birthDate = val; hasPatient = true; }
-        if (definition.includes('Patient.gender')) { patient.gender = val; hasPatient = true; }
-        if (definition.includes('Patient.telecom')) {
-          patient.telecom = [{ system: 'phone', use: 'mobile', value: val }];
-          hasPatient = true;
-        }
-        if (definition.includes('Patient.address.line')) { patient.address[0].line = [val]; hasPatient = true; }
-        if (definition.includes('Patient.address.city')) { patient.address[0].city = val; hasPatient = true; }
-        if (definition.includes('Patient.address.state')) { patient.address[0].state = val; hasPatient = true; }
-        if (definition.includes('Coverage.payor')) { coverage.payor[0].display = val; hasCoverage = true; }
-        if (definition.includes('Coverage.class.value')) {
-          coverage.class = [{ type: { coding: [{ code: 'group' }] }, value: val }];
-          hasCoverage = true;
-        }
-        if (definition.includes('Coverage.subscriberId')) { coverage.subscriberId = val; hasCoverage = true; }
-        if (definition.includes('Coverage.relationship')) { coverage.relationship.coding[0].code = val; hasCoverage = true; }
-      }
-
-      function walk(qList, rList) {
-        for (const rItem of rList) {
-          const qItem = qList.find(q => q.linkId === rItem.linkId);
-          if (!qItem) continue;
-          if (qItem.definition && rItem.answer?.[0]) {
-            applyDefinition(qItem.definition, getAnswerValue(rItem.answer));
-          }
-          if (rItem.item && qItem.item) walk(qItem.item, rItem.item);
-        }
-      }
-      walk(questionnaire.item || [], response.item || []);
-
-      return {
-        patient: hasPatient ? patient : null,
-        coverage: hasCoverage ? coverage : null
-      };
+    async function putResource(resource) {
+      if (!resource.id) throw new Error('Resource needs id for PUT: ' + resource.resourceType);
+      return fhir(`/${resource.resourceType}/${resource.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(resource)
+      });
     }
 
-    function definitionExtract(questionnaire, response) {
-      const { patient } = definitionExtractResources(questionnaire, response);
-      return {
-        resourceType: 'Bundle',
-        type: 'transaction',
-        entry: [{ resource: patient || { resourceType: 'Patient' }, request: { method: 'POST', url: 'Patient' } }]
-      };
+    async function loadFml() {
+      if (fmlContent) return fmlContent;
+      const res = await fetch('legacy-patient-normalize.fml');
+      if (!res.ok) throw new Error('Failed to load FML (HTTP ' + res.status + ')');
+      fmlContent = await res.text();
+      return fmlContent;
     }
 
-    /** Field-level merge with provenance tracking */
+    async function hapiExtract(questionnaireDoc, qrDoc) {
+      const extractType = inferExtractType(questionnaireDoc);
+      const q = flattenQuestionnaire({ ...questionnaireDoc, status: questionnaireDoc.status || 'active' }, extractType);
+      const qr = flattenQr({
+        ...qrDoc,
+        status: 'completed',
+        questionnaire: qrDoc.questionnaire || q.url
+      });
+      if (!q.id || !qr.id) throw new Error('Questionnaire and QuestionnaireResponse need id for HAPI $extract');
+
+      const putQ = await putResource(q);
+      if (!putQ.ok) throw new Error('PUT Questionnaire failed HTTP ' + putQ.status + ': ' + JSON.stringify(putQ.json));
+      const putQr = await putResource(qr);
+      if (!putQr.ok) throw new Error('PUT QuestionnaireResponse failed HTTP ' + putQr.status + ': ' + JSON.stringify(putQr.json));
+
+      let r = await fhir('/QuestionnaireResponse/$extract', { method: 'POST', body: JSON.stringify(qr) });
+      if (!r.ok) {
+        const params = {
+          resourceType: 'Parameters',
+          parameter: [
+            { name: 'questionnaire', resource: q },
+            { name: 'questionnaire-response', resource: qr }
+          ]
+        };
+        r = await fhir('/QuestionnaireResponse/$extract', { method: 'POST', body: JSON.stringify(params) });
+      }
+      if (!r.ok) throw new Error('HAPI $extract failed HTTP ' + r.status + ': ' + JSON.stringify(r.json));
+      return r.json;
+    }
+
+    function patientFromTransformResponse(json) {
+      if (json.resourceType === 'Patient') return json;
+      if (json.resourceType === 'Parameters') {
+        return json.parameter?.find(p => p.resource?.resourceType === 'Patient')?.resource
+          || json.parameter?.find(p => p.name === 'output')?.resource;
+      }
+      if (json.resourceType === 'Bundle') return json.entry?.[0]?.resource;
+      return null;
+    }
+
+    async function matchboxTransform(inputPatient) {
+      const fml = await loadFml();
+      const mapId = 'okrx-legacy-patient-normalize';
+
+      await matchboxFhir('/StructureMap/' + mapId, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/fhir-mapping' },
+        body: fml
+      });
+
+      const params = {
+        resourceType: 'Parameters',
+        parameter: [
+          { name: 'resource', valueString: JSON.stringify(inputPatient) },
+          { name: 'map', valueString: fml }
+        ]
+      };
+
+      const r = await matchboxFhir('/StructureMap/$transform', {
+        method: 'POST',
+        body: JSON.stringify(params)
+      });
+
+      if (!r.ok) throw new Error('Matchbox $transform failed HTTP ' + r.status + ': ' + JSON.stringify(r.json));
+
+      const output = patientFromTransformResponse(r.json);
+      if (!output) throw new Error('Matchbox $transform returned unexpected payload: ' + JSON.stringify(r.json));
+      return { input: inputPatient, output, mapUrl: 'http://okrx.ca/fhir/StructureMap/' + mapId, engine: 'Matchbox' };
+    }
+
+    function resourcesFromExtractBundle(bundle) {
+      const patients = [];
+      const coverages = [];
+      if (bundle.resourceType === 'Patient') patients.push(bundle);
+      if (bundle.resourceType === 'Coverage') coverages.push(bundle);
+      for (const entry of bundle.entry || []) {
+        const res = entry.resource;
+        if (!res) continue;
+        if (res.resourceType === 'Patient') patients.push(res);
+        if (res.resourceType === 'Coverage') coverages.push(res);
+      }
+      return { patient: patients[0] || null, coverage: coverages[0] || null, bundle };
+    }
+
+    async function persistPatient(patient) {
+      const body = { ...patient, id: DEMO_PATIENT_ID };
+      const r = await putResource(body);
+      if (!r.ok) throw new Error('PUT Patient failed HTTP ' + r.status + ': ' + JSON.stringify(r.json));
+      return body;
+    }
+
+    async function persistCoverage(coverage) {
+      const body = {
+        ...coverage,
+        id: 'coverage-jane-doe-sunlife',
+        status: coverage.status || 'active',
+        beneficiary: { reference: 'Patient/' + DEMO_PATIENT_ID }
+      };
+      const r = await putResource(body);
+      if (!r.ok) throw new Error('PUT Coverage failed HTTP ' + r.status + ': ' + JSON.stringify(r.json));
+      return body;
+    }
+
+    /** Field-level merge — OkRxFHIRAPI orchestration (not a FHIR op); runs after HAPI $extract */
     function mergePatient360(existing, extracted, source, options = {}) {
       const provenance = { ...(options.provenance || {}) };
       const merged = existing ? JSON.parse(JSON.stringify(existing)) : {
@@ -675,13 +779,19 @@
         : '—';
     }
 
-    function applyStep(source, qrDoc, qDoc) {
-      const extracted = definitionExtractResources(qDoc, qrDoc);
+    async function applyStep(source, qrDoc, qDoc) {
+      if (source === 'profile-qr') {
+        const got = await fhir('/Patient/' + DEMO_PATIENT_ID);
+        if (got.ok && got.json?.resourceType === 'Patient') mergeState.patient = got.json;
+      }
+
+      const bundle = await hapiExtract(qDoc, qrDoc);
+      const { patient: extractedPatient, coverage: extractedCoverage } = resourcesFromExtractBundle(bundle);
       const prevProv = { ...mergeState.provenance };
 
-      if (extracted.patient) {
-        const { patient, provenance } = mergePatient360(mergeState.patient, extracted.patient, source, { provenance: mergeState.provenance });
-        mergeState.patient = patient;
+      if (extractedPatient) {
+        const { patient, provenance } = mergePatient360(mergeState.patient, extractedPatient, source, { provenance: mergeState.provenance });
+        mergeState.patient = await persistPatient(patient);
         mergeState.provenance = provenance;
         const intakeLinks = FIELD_ROWS.filter(r => r.bucket === 'intake').map(r => r.linkId);
         if (source === 'intake-qr') recordAnswers(qrDoc, intakeLinks);
@@ -694,8 +804,8 @@
         });
       }
 
-      if (extracted.coverage) {
-        mergeState.coverage = buildCoverageFromExtract(extracted.coverage, DEMO_PATIENT_ID);
+      if (extractedCoverage) {
+        mergeState.coverage = await persistCoverage(buildCoverageFromExtract(extractedCoverage, DEMO_PATIENT_ID));
         const drugLinks = FIELD_ROWS.filter(r => r.bucket === 'drugplan').map(r => r.linkId);
         recordAnswers(qrDoc, drugLinks);
         FIELD_ROWS.filter(r => r.bucket === 'drugplan').forEach(row => {
@@ -726,36 +836,57 @@
       document.getElementById('out-legacy-insurer').textContent = '—';
     }
 
-    document.getElementById('btn-step-intake').onclick = () => {
-      applyStep('intake-qr', intakeQr, intakeQuestionnaire);
-      mergeState.step = 1;
-      document.getElementById('btn-step-intake').disabled = true;
-      document.getElementById('btn-step-drugplan').disabled = false;
-      const el = document.getElementById('status-merge');
-      el.textContent = 'Step A complete — intake extracted, merged to Patient360, dual-write to Patient table';
-      el.className = 'status ok';
-      renderMergeUi();
+    document.getElementById('btn-step-intake').onclick = async () => {
+      const btn = document.getElementById('btn-step-intake');
+      btn.disabled = true;
+      try {
+        await applyStep('intake-qr', intakeQr, intakeQuestionnaire);
+        mergeState.step = 1;
+        document.getElementById('btn-step-drugplan').disabled = false;
+        const el = document.getElementById('status-merge');
+        el.textContent = 'Step A complete — HAPI $extract → PUT Patient on HAPI';
+        el.className = 'status ok';
+      } catch (e) {
+        const el = document.getElementById('status-merge');
+        el.textContent = e.message;
+        el.className = 'status err';
+        btn.disabled = false;
+      }
     };
 
-    document.getElementById('btn-step-drugplan').onclick = () => {
-      applyStep('drugplan-qr', drugPlanQr, drugPlanQuestionnaire);
-      mergeState.step = 2;
-      document.getElementById('btn-step-drugplan').disabled = true;
-      document.getElementById('btn-step-profile').disabled = false;
-      const el = document.getElementById('status-merge');
-      el.textContent = 'Step B complete — Coverage + PatientInsurer dual-write';
-      el.className = 'status ok';
-      renderMergeUi();
+    document.getElementById('btn-step-drugplan').onclick = async () => {
+      const btn = document.getElementById('btn-step-drugplan');
+      btn.disabled = true;
+      try {
+        await applyStep('drugplan-qr', drugPlanQr, drugPlanQuestionnaire);
+        mergeState.step = 2;
+        document.getElementById('btn-step-profile').disabled = false;
+        const el = document.getElementById('status-merge');
+        el.textContent = 'Step B complete — HAPI $extract → PUT Coverage on HAPI';
+        el.className = 'status ok';
+      } catch (e) {
+        const el = document.getElementById('status-merge');
+        el.textContent = e.message;
+        el.className = 'status err';
+        btn.disabled = false;
+      }
     };
 
-    document.getElementById('btn-step-profile').onclick = () => {
-      applyStep('profile-qr', profileUpdateQr, intakeQuestionnaire);
-      mergeState.step = 3;
-      document.getElementById('btn-step-profile').disabled = true;
-      const el = document.getElementById('status-merge');
-      el.textContent = 'Step C complete — phone/address updated (profile-qr > intake-qr)';
-      el.className = 'status ok';
-      renderMergeUi();
+    document.getElementById('btn-step-profile').onclick = async () => {
+      const btn = document.getElementById('btn-step-profile');
+      btn.disabled = true;
+      try {
+        await applyStep('profile-qr', profileUpdateQr, intakeQuestionnaire);
+        mergeState.step = 3;
+        const el = document.getElementById('status-merge');
+        el.textContent = 'Step C complete — HAPI $extract + merge → PUT Patient on HAPI';
+        el.className = 'status ok';
+      } catch (e) {
+        const el = document.getElementById('status-merge');
+        el.textContent = e.message;
+        el.className = 'status err';
+        btn.disabled = false;
+      }
     };
 
     document.getElementById('btn-reset-scenario').onclick = resetScenario;
@@ -765,10 +896,19 @@
     // --- Tab 1 engine demo (unchanged behavior) ---
     async function checkServer() {
       try {
-        const h = await fhir('/metadata');
-        document.getElementById('server-badge').textContent = h.ok ? 'online' : 'error';
-        document.getElementById('server-badge').className = 'badge ' + (h.ok ? 'ok' : '');
-        return h.ok;
+        const [h, m] = await Promise.all([fhir('/metadata'), matchboxFhir('/metadata')]);
+        const badge = document.getElementById('server-badge');
+        if (h.ok && m.ok) {
+          badge.textContent = 'online';
+          badge.className = 'badge ok';
+        } else if (h.ok || m.ok) {
+          badge.textContent = h.ok ? 'HAPI only' : 'Matchbox only';
+          badge.className = 'badge';
+        } else {
+          badge.textContent = 'offline';
+          badge.className = 'badge';
+        }
+        return h.ok && m.ok;
       } catch {
         document.getElementById('server-badge').textContent = 'offline';
         return false;
@@ -776,58 +916,36 @@
     }
 
     document.getElementById('btn-metadata').onclick = async () => {
-      const r = await fhir('/metadata');
-      const ops = r.json?.rest?.[0]?.resource?.flatMap(x => (x.operation || []).map(o => x.type + '/' + o.name)) || [];
-      show('out-metadata', null, { fhirVersion: r.json?.fhirVersion, operations: ops.filter(o => o.includes('$')) }, r.ok);
+      const [h, m] = await Promise.all([fhir('/metadata'), matchboxFhir('/metadata')]);
+      const hOps = collectOperations(h.json);
+      const mOps = collectOperations(m.json);
+      show('out-metadata', null, {
+        hapi: { ok: h.ok, fhirVersion: h.json?.fhirVersion, operations: hOps.filter(o => o.includes('$')) },
+        matchbox: { ok: m.ok, fhirVersion: m.json?.fhirVersion, operations: mOps.filter(o => o.includes('$')) }
+      }, h.ok && m.ok);
     };
 
-    document.getElementById('btn-extract').onclick = () => {
-      const bundle = definitionExtract(questionnaire, qr);
-      show('out-extract', 'status-extract', bundle, true, 'Definition extract OK — Patient from Questionnaire metadata (no FML)');
+    document.getElementById('btn-extract').onclick = async () => {
+      const btn = document.getElementById('btn-extract');
+      btn.disabled = true;
+      try {
+        const bundle = await hapiExtract(questionnaire, qr);
+        show('out-extract', 'status-extract', bundle, true, 'HAPI $extract OK — server-side definition extract');
+      } catch (e) {
+        show('out-extract', 'status-extract', String(e.message), false, e.message);
+      }
+      btn.disabled = false;
     };
-
-    function titleCaseName(namePart) {
-      return namePart.charAt(0) + namePart.slice(1).toLowerCase();
-    }
-
-    function applyLegacyPatientTransform(source) {
-      const n = source.name[0];
-      return {
-        resourceType: 'Patient',
-        name: [{
-          family: titleCaseName(n.family),
-          given: n.given.map(titleCaseName)
-        }],
-        gender: source.gender,
-        birthDate: source.birthDate,
-        identifier: [{
-          system: 'http://okrx.ca/mrn',
-          value: 'OKRX-' + source.birthDate.replace(/-/g, '')
-        }]
-      };
-    }
 
     document.getElementById('btn-transform').onclick = async () => {
       const btn = document.getElementById('btn-transform');
       btn.disabled = true;
       try {
-        const input = { ...legacyPatientInput };
-        await fhir('/StructureMap/okrx-legacy-patient-normalize', { method: 'PUT', body: JSON.stringify(structureMap) });
-        const params = {
-          resourceType: 'Parameters',
-          parameter: [
-            { name: 'source', valueUri: 'http://hl7.org/fhir/StructureDefinition/Patient' },
-            { name: 'content', resource: input }
-          ]
-        };
-        const server = await fhir('/StructureMap/okrx-legacy-patient-normalize/$transform', { method: 'POST', body: JSON.stringify(params) });
-        const output = (server.ok && server.json?.resourceType === 'Patient')
-          ? server.json
-          : applyLegacyPatientTransform(input);
-        show('out-transform', 'status-transform', { input, output, mapStored: structureMap.url }, true,
-          'Input: DOE/JANE (legacy) → Output: Doe/Jane + MRN identifier');
+        const result = await matchboxTransform({ ...legacyPatientInput });
+        show('out-transform', 'status-transform', result, true,
+          'Matchbox $transform OK — DOE/JANE → proper case + MRN (FML map on Matchbox)');
       } catch (e) {
-        show('out-transform', 'status-transform', String(e), false, e.message);
+        show('out-transform', 'status-transform', String(e.message), false, e.message);
       }
       btn.disabled = false;
     };

@@ -6,6 +6,7 @@ hapi:
   fhir:
     cr:
       enabled: true
+    ig_runtime_upload_enabled: true
     allow_external_references: true
     cors:
       allowed_origin:
