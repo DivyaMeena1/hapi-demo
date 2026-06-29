@@ -1,0 +1,34 @@
+{
+  "resourceType": "StructureMap",
+  "id": "okrx-patient-copy",
+  "url": "http://okrx.ca/fhir/StructureMap/okrx-patient-copy",
+  "name": "OkRxPatientCopy",
+  "status": "active",
+  "structure": [
+    { "url": "http://hl7.org/fhir/StructureDefinition/Patient", "mode": "source" },
+    { "url": "http://hl7.org/fhir/StructureDefinition/Patient", "mode": "target" }
+  ],
+  "group": [{
+    "name": "CopyPatient",
+    "typeMode": "types",
+    "input": [{ "name": "src", "type": "Patient", "mode": "source" }],
+    "output": [{ "name": "tgt", "type": "Patient", "mode": "target" }],
+    "rule": [
+      {
+        "name": "copyName",
+        "source": [{ "context": "src", "element": "name" }],
+        "target": [{ "context": "tgt", "element": "name" }]
+      },
+      {
+        "name": "copyGender",
+        "source": [{ "context": "src", "element": "gender" }],
+        "target": [{ "context": "tgt", "element": "gender" }]
+      },
+      {
+        "name": "copyBirthDate",
+        "source": [{ "context": "src", "element": "birthDate" }],
+        "target": [{ "context": "tgt", "element": "birthDate" }]
+      }
+    ]
+  }]
+}

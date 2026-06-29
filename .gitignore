@@ -1,0 +1,23 @@
+# Local / generated
+extract-result.json
+*.log
+.env
+.env.*
+
+# Nested clone from earlier layout (use repo root instead)
+hapi-demo/
+
+# Docker local overrides (keep docker-compose.yml tracked)
+docker-compose.override.yml
+docker-compose.local.yml
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~

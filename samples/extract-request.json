@@ -1,0 +1,73 @@
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {
+      "name": "questionnaire-response",
+      "resource": {
+        "resourceType": "QuestionnaireResponse",
+        "id": "okrx-name-response",
+        "questionnaire": "http://okrx.ca/fhir/Questionnaire/okrx-name-demo",
+        "status": "completed",
+        "item": [
+          {
+            "linkId": "patient-section",
+            "item": [
+              {
+                "linkId": "first-name",
+                "answer": [{ "valueString": "Jane" }]
+              },
+              {
+                "linkId": "last-name",
+                "answer": [{ "valueString": "Doe" }]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "questionnaire",
+      "resource": {
+        "resourceType": "Questionnaire",
+        "id": "okrx-name-demo",
+        "url": "http://okrx.ca/fhir/Questionnaire/okrx-name-demo",
+        "title": "OkRx — name demo (definition extract)",
+        "status": "active",
+        "item": [
+          {
+            "linkId": "patient-section",
+            "type": "group",
+            "text": "Patient",
+            "extension": [
+              {
+                "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-definitionExtract",
+                "extension": [
+                  {
+                    "url": "definition",
+                    "valueCanonical": "http://hl7.org/fhir/StructureDefinition/Patient"
+                  }
+                ]
+              }
+            ],
+            "item": [
+              {
+                "linkId": "first-name",
+                "type": "string",
+                "text": "First name",
+                "required": true,
+                "definition": "http://hl7.org/fhir/StructureDefinition/Patient#Patient.name.given"
+              },
+              {
+                "linkId": "last-name",
+                "type": "string",
+                "text": "Last name",
+                "required": true,
+                "definition": "http://hl7.org/fhir/StructureDefinition/Patient#Patient.name.family"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

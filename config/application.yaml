@@ -1,0 +1,17 @@
+spring:
+  main:
+    allow-bean-definition-overriding: true
+
+hapi:
+  fhir:
+    cr:
+      enabled: true
+    allow_external_references: true
+    cors:
+      allowed_origin:
+        - "*"
+    tester:
+      home:
+        name: OkRx HAPI Test
+        server_address: "http://localhost:8090/fhir"
+        fhir_version: R4

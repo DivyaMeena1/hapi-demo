@@ -1,0 +1,13 @@
+{
+  "resourceType": "ConceptMap",
+  "id": "okrx-gender",
+  "url": "http://okrx.ca/fhir/ConceptMap/okrx-gender",
+  "status": "active",
+  "group": [{
+    "source": "http://okrx.ca/fhir/CodeSystem/form-gender",
+    "target": "http://hl7.org/fhir/administrative-gender",
+    "element": [
+      { "code": "F", "target": [{ "code": "female", "equivalence": "equivalent" }] }
+    ]
+  }]
+}
